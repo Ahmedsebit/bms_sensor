@@ -4,6 +4,13 @@ Standalone Python 3.13+ service and explicitly TEST-only sender. No PostgreSQL,
 backend package, Android SDK or frontend is required. This is HTTP sensor ingress,
 not a hardware/vendor adapter or a mobile sensor app.
 
+## School deployment architecture
+
+See [Dormitory sensor architecture](docs/school-sensor-architecture.md) for the
+proposed physical layout, school network, BMS integration, commissioning checks
+and responsibilities. It separates independent fire protection from supplementary
+BMS monitoring and identifies the hardware integration still to be built.
+
 ## Install and run
 
 Run from this folder in PowerShell:
