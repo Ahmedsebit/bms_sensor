@@ -12,6 +12,11 @@ sensor-service connection, commissioning checks and responsibilities.
 It separates independent fire protection from supplementary
 BMS monitoring and identifies the hardware integration still to be built.
 
+The architecture's deployment decision register covers real-device selection,
+validated freshness policies, offline retention, HTTPS reachability and the
+deliberate in-app-only notification boundary. These gates require acceptance
+evidence before a physical pilot.
+
 ## Install and run
 
 Run from this folder in PowerShell:
