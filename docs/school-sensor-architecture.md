@@ -37,21 +37,26 @@ flowchart TB
   subgraph LOCAL["Independent local fire protection - approved design"]
     DET["Approved smoke detectors / alarms"]
     PANEL["Approved local alarm / panel arrangements"]
+    WIFI_SMOKE["Optional approved Wi-Fi-capable smoke alarm\nOnly where permitted by the fire design"]
     WARN["Occupant warning and school emergency procedures"]
     DET --> PANEL --> WARN
+    WIFI_SMOKE -->|"Local alarm operation, independent of Wi-Fi"| WARN
   end
 
   subgraph SCHOOL["School monitoring network - proposed"]
     ENV["Room / zone temperature and humidity sensors"]
+    AP["Dormitory Wi-Fi access points\nDedicated sensor SSID / network segment"]
     IFACE["Optional approved read-only fire-system interface"]
     ADAPTER["School gateway + vendor adapter\nDevice identity, decoding, durable retry queue"]
     NET["Managed school network\nRestricted sensor segment + approved power backup"]
-    ENV --> ADAPTER
-    IFACE --> ADAPTER
+    ENV -->|"Wi-Fi where supported"| AP
+    AP -->|"School LAN / vendor telemetry"| ADAPTER
+    IFACE -->|"Approved interface; not necessarily Wi-Fi"| ADAPTER
     ADAPTER --> NET
   end
 
   PANEL -. "Read-only telemetry where supported and approved" .-> IFACE
+  WIFI_SMOKE -. "Supplementary telemetry over Wi-Fi" .-> AP
   NET -->|"HTTPS + gateway source credential"| INGRESS
   INGRESS["Sensor service\nPOST /api/v1/readings"]
   JOURNAL["School-scoped durable event journal"]
@@ -112,19 +117,202 @@ Do not purchase a specific model until the following are verified.
 | School network | Measured coverage at actual mounting locations, restricted access, sufficient capacity and an agreed outage plan |
 | Power/backup | Documented loads, required autonomy and replacement/maintenance procedure, selected by the responsible installer |
 
-**Provisional network approach:** Use the managed school LAN and wired gateway
-backhaul where available. A dedicated sensor network segment should permit only
-the required device-to-adapter traffic and adapter-to-ingress HTTPS connections.
-Keep students' Wi-Fi separate from sensor administration.
+**Proposed Wi-Fi approach:** Wi-Fi-capable monitoring devices join a dedicated
+school sensor network. A local adapter collects their vendor telemetry and sends
+the service's v1 observations over authenticated HTTPS. Use wired backhaul for
+access points and the adapter where available. Keep students' Wi-Fi separate from
+sensor administration.
 
-Choose the device link after a site survey and vendor evaluation: wired devices,
-supported Wi-Fi or a supported low-power radio system. A radio choice such as
-LoRaWAN introduces its own network-server and decoder components; these are not
-provided by BMS. Do not mix protocols without the necessary adapters.
+Not every smoke detector has Wi-Fi. Existing panel-connected detectors remain on
+their approved fire-system wiring; their optional read-only panel interface feeds
+the adapter instead. Use a Wi-Fi-capable smoke alarm only where that exact product
+and its local alarm arrangements are accepted by the approved fire design.
+
+If selected devices use another radio protocol, the appropriate network and
+decoder are additional components. For example, LoRaWAN is not a Wi-Fi link and
+its network-server/decoder are not provided by BMS.
 
 Design loss-of-power and loss-of-network behaviour explicitly. Size monitoring
 backup power from actual loads and agreed outage duration. Backup for the fire
 system belongs to the approved fire-system design, not the BMS network design.
+
+### 4.1 Wi-Fi connection path
+
+The proposed monitoring path is:
+
+```text
+Wi-Fi temperature/humidity device or approved Wi-Fi-capable smoke alarm
+  -> dormitory access point: WALLINDE-SENSORS
+  -> restricted school sensor network
+  -> local vendor adapter with persistent retry queue
+  -> school router/firewall
+  -> HTTPS ingress for our sensor service
+  -> sensor service journal
+  -> school-scoped BMS worker
+  -> authorised staff workspaces
+```
+
+**Wi-Fi is the network connection, not the sensor API.** A Wi-Fi association does
+not automatically send readings to BMS. The selected device must expose a
+documented telemetry interface, and an adapter must translate it into our v1
+payload. BMS does not currently discover or configure physical Wi-Fi devices.
+
+For a conventional fire panel, replace the first two steps with its approved
+read-only interface to the adapter. Do not add Wi-Fi modules to individual
+detectors on the panel circuit without manufacturer and fire-designer approval.
+
+### 4.2 Set up the school's sensor Wi-Fi
+
+Illustrative values below are a plan, not existing network configuration:
+
+| Setting | Example / rule |
+|---|---|
+| SSID | `WALLINDE-SENSORS`; separate from student/guest networks |
+| Network segment | Dedicated sensor VLAN/subnet, for example `10.42.50.0/24`, only if it does not conflict with the school's addressing |
+| Access points | Managed APs with measured coverage at every mounting position; do not assume one AP covers a whole dormitory |
+| Device addressing | Managed DHCP; reservations where needed for documented polling/callback configuration |
+| Adapter | A maintained local host, preferably wired; illustrative address `10.42.50.10` |
+| Wi-Fi security | Supported WPA2/WPA3 configuration approved by school IT; individual credentials where device/AP support permits; no open network |
+| Radio compatibility | Match the selected device's supported band and security mode; enable a secured 2.4 GHz network if those devices require it |
+| Network services | Approved DHCP, DNS and time synchronisation as required; no captive portal or browser-based student login |
+| Firewall | Permit only required telemetry, management and uplink traffic |
+
+Permit device-to-adapter telemetry only on the selected vendor protocol/port.
+Permit adapter-to-device status reads only when the integration requires polling.
+If client isolation is enabled, explicitly allow the required adapter path and
+verify it works; do not enable unrestricted peer-to-peer device access.
+
+Permit the adapter to reach the approved sensor-service ingress over TCP 443.
+Allow separately documented management/update services only where necessary.
+Block unsolicited internet-to-device access and unnecessary device internet
+access. Do not port-forward smoke alarms or expose device management publicly.
+The BMS worker needs its own HTTPS route to the service feed; phones and browsers
+must not hold the gateway source credential.
+
+Select authenticated, encrypted telemetry where the device supports it. If a
+candidate only supports unauthenticated/unencrypted local telemetry, document
+that limitation and obtain explicit security approval or select different
+hardware; an isolated SSID alone does not establish trustworthy device identity.
+
+### 4.3 Provision each device
+
+1. Record the serial number, stable vendor identity, intended room/zone and
+   supported telemetry capabilities before installation.
+2. Use the manufacturer's authorised setup method to join `WALLINDE-SENSORS`.
+   Do not assume every device uses a temporary setup hotspot or the same app.
+3. Replace default administration credentials and secure or disable the setup
+   interface where the manufacturer supports it. Keep Wi-Fi credentials private.
+4. Verify association, addressing, signal/coverage and reconnection at the actual
+   mounting position using the vendor's requirements.
+5. Configure the approved local telemetry destination or read-only status
+   interface. Devices send vendor events to the **adapter**, not arbitrary JSON
+   directly to our ingestion endpoint.
+6. Bind the stable vendor identity to the registered `externalDeviceId`. An IP
+   address or MAC address alone is not sufficient proof of an authorised sender.
+7. Register the allowed external device IDs under the adapter's source credential
+   and create their matching SERVICE location records in BMS.
+8. Perform controlled observation, alarm/clear where applicable, restart and
+   reconnection tests before accepting the device.
+
+Keep the gateway source bearer token on the adapter, not copied to every device.
+Authenticate/validate device-origin telemetry using the selected vendor's
+supported mechanism and the approved network controls.
+
+### 4.4 How device telemetry reaches our service
+
+The preferred initial integration is a **local adapter**:
+
+| Stage | Responsibility |
+|---|---|
+| Device | Report a real observation or supported event through its documented interface |
+| Access point / LAN | Transport packets; it does not decode smoke or environmental data |
+| Vendor adapter | Validate the sender, decode units/state/time, map the device, assign/preserve an event UUID and durably queue the v1 observation |
+| HTTPS ingress | Terminate approved TLS, enforce network/request controls and forward to the sensor service |
+| Sensor service | Authenticate the source, check the device allowlist and schema, journal the reading and return a receipt |
+| School BMS worker | Read the feed with a separate reader credential and update the mapped sensor |
+
+The following address is an illustrative deployment placeholder, **not a
+running endpoint**:
+
+```http
+POST https://sensors.school.example/api/v1/readings
+Authorization: Bearer <gateway-source-token>
+Content-Type: application/json
+```
+
+Use the v1 JSON in section 6 as the request body. On receipt, the service returns
+`sequence`, `receivedAt` and `duplicate`. The adapter marks delivery complete only
+after a successful service receipt. Lost acknowledgements are retried with the
+same event ID and identical body. Surface authentication/schema/conflict failures
+for intervention; do not silently discard observations or retry invalid data as
+new events.
+
+For an illustrative smoke observation, a registered smoke source submits:
+
+```json
+{
+  "schemaVersion": 1,
+  "eventId": "57d24b31-41af-4f5f-9bac-39b8d14c87ea",
+  "deviceId": "cedar-room01-smoke-01",
+  "observedAt": "2026-11-25T10:01:00Z",
+  "health": "healthy",
+  "measurements": {
+    "smokeAlarm": true
+  }
+}
+```
+
+`health: healthy` and an active smoke alarm are different dimensions: fresh
+telemetry does not mean there is no alarm. An unrelated heartbeat must not supply
+a fabricated clear.
+
+As an **API illustration, not a hardware recommendation**, Shelly's documented
+Smoke component exposes `alarm` and `mute` separately, with `smoke.alarm`,
+`smoke.alarm_off` and `smoke.alarm_test` events [4]. An adapter for that documented
+interface must distinguish alarm/clear from test and must not treat `mute` as an
+alarm clear. BMS must not call alarm-control methods. Actual model capability,
+local approvals, firmware and delivery/authentication behaviour still require
+verification. The manufacturer's WiFi component documentation illustrates
+device-specific network configuration and status APIs [5].
+
+A device that can only publish to a vendor cloud needs a separately approved,
+documented cloud integration. Do not assume it can deliver local webhooks.
+Direct device-to-service delivery is an alternative only if the device meets
+our full JSON, identity, credential, TLS, timestamp and retry requirements; it
+is not the default architecture.
+
+### 4.5 Expose the sensor service safely
+
+The current service binds to `127.0.0.1:8010`. This is a loopback address on the
+service host, **not an address that dormitory devices can reach**. On a device,
+`127.0.0.1` refers to that device itself.
+
+Deploy an approved HTTPS reverse proxy/ingress in front of the service, with a
+valid certificate and the school's approved DNS name. For a same-host proxy,
+forward the authorised requests to the loopback service. If the proxy and
+service are on different hosts or containers, explicitly design and protect
+that internal connection; loopback forwarding across hosts will not work.
+
+The service may be hosted on school infrastructure or an approved remote host.
+The local adapter uses the ingress URL in either case. Neither DNS/proxy/TLS
+deployment nor the physical Wi-Fi adapter is created by the current demo.
+
+### 4.6 What happens when Wi-Fi fails
+
+| Failure | Required monitoring behaviour |
+|---|---|
+| Device loses Wi-Fi | Detect missed expected telemetry; BMS becomes unavailable/stale under its configured policy |
+| Adapter can reach devices but not the service | Queue acquired observations locally; retain original event IDs/times and retry when the uplink recovers |
+| Adapter/AP loses power | Report the monitoring outage when observable; no claim that devices are reporting normally |
+| Service or worker is unavailable | Retain recoverable journal/queue state and expose stale monitoring rather than a fresh normal status |
+
+The adapter cannot recover an event it never received. Verify whether each device
+buffers/replays events across Wi-Fi outages; document any event-loss limitation
+and the agreed recovery procedure. Periodic status reads cannot reconstruct
+every transient alarm that occurred while disconnected.
+
+In every case, the approved local fire warning and emergency arrangements remain
+independent. A Wi-Fi reconnection or replay is not proof of current safety.
 
 ## 5. Naming, registration and location mapping
 
@@ -279,7 +467,10 @@ mapping; do not silently reuse an old identity for a different physical location
 - [ ] Install fire equipment/interfaces through the qualified professional.
 - [ ] Mount environmental devices according to selected manufacturer instructions.
 - [ ] Install and measure network coverage at every actual sensor position.
+- [ ] Configure the sensor SSID/VLAN, supported Wi-Fi security, DHCP and firewall.
+- [ ] Verify device-to-adapter telemetry, including any client-isolation exception.
 - [ ] Install gateway/adapter and approved monitoring power backup securely.
+- [ ] Deploy approved DNS/TLS ingress and verify adapter-to-service delivery.
 - [ ] Label assets and record their exact dormitory/zone/location mapping.
 - [ ] Provision separate source/reader credentials; register devices as SERVICE sensors.
 - [ ] Assign responsible Officers and approve unavailable-sensor check programmes.
@@ -296,6 +487,10 @@ mapping; do not silently reuse an old identity for a different physical location
       unavailable; independent fire protection remains operational.
 - [ ] Restart the adapter and recover queued events with original IDs/timestamps;
       verify no silent losses, duplicate effects or false "current" readings.
+- [ ] Disconnect/reconnect device Wi-Fi and restart an AP; verify the documented
+      device buffering limitations, unavailable status and recovery.
+- [ ] Verify smoke alarm/clear versus self-test decoding and confirm that BMS
+      cannot mute/reset the local fire system.
 - [ ] Exercise approved monitoring-power failure, low-battery/fault reporting,
       gateway outage, service outage, worker outage and clock-error cases.
 - [ ] Verify unknown devices and wrong-school credentials cannot inject/read records.
@@ -318,6 +513,7 @@ disabling existing approved fire protection.
 | Unavailable-sensor daily follow-up workflow | Implemented in the backend; school approval of procedures still required |
 | Local sender | TEST-only; not a hardware adapter |
 | Physical sensors, approved fire-panel interface and vendor decoder | Not supplied or implemented |
+| Sensor SSID/VLAN, access-point provisioning and Wi-Fi device setup | Proposed deployment work; not provided by BMS |
 | Gateway persistent offline queue and field network | Proposed; not implemented by the sensor service |
 | Production HTTPS ingress, monitoring, backup/recovery operations | Deployment work; service currently binds to loopback |
 | Temperature/humidity threshold rules and trend reporting | Not provided by the current ingestion/availability workflow |
@@ -338,3 +534,7 @@ References are background and procurement guidance, not local design approval.
    https://sensirion.com/en/media/documents/FC5BED84/662B494D/Sensirion_Humidity_Temperature_Design_Guide.pdf
 3. NIST, *IoT Device Cybersecurity Capability Core Baseline (NISTIR 8259A)*:
    https://csrc.nist.gov/pubs/ir/8259/a/final
+4. Shelly, *Smoke component API* (vendor-specific example, not product approval):
+   https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/Smoke/
+5. Shelly, *WiFi component API* (verify support on the selected device):
+   https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/WiFi/

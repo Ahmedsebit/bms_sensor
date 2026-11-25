@@ -7,8 +7,9 @@ not a hardware/vendor adapter or a mobile sensor app.
 ## School deployment architecture
 
 See [Dormitory sensor architecture](docs/school-sensor-architecture.md) for the
-proposed physical layout, school network, BMS integration, commissioning checks
-and responsibilities. It separates independent fire protection from supplementary
+proposed physical layout, Wi-Fi device provisioning, local adapter and HTTPS
+sensor-service connection, commissioning checks and responsibilities.
+It separates independent fire protection from supplementary
 BMS monitoring and identifies the hardware integration still to be built.
 
 ## Install and run
